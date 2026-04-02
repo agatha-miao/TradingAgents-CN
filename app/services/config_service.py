@@ -991,7 +991,10 @@ class ConfigService:
                     or model_name.startswith("gpt-5")
                 )
 
-                if is_reasoning_model:
+                # OpenAI 官方接口优先使用 max_completion_tokens（对 o 系列更稳）
+                prefer_completion_tokens = provider_str == "openai" or is_reasoning_model
+
+                if prefer_completion_tokens:
                     data["max_completion_tokens"] = 200
                     logger.info(f"🧠 推理模型测试参数: 使用 max_completion_tokens=200, model={llm_config.model_name}")
                 else:
@@ -1004,6 +1007,32 @@ class ConfigService:
 
                 # 发送测试请求
                 response = requests.post(url, json=data, headers=headers, timeout=15)
+
+                # 兜底兼容A：若服务端提示 max_tokens 不支持，则自动改为 max_completion_tokens 重试
+                if response.status_code >= 400:
+                    response_text = (response.text or "").lower()
+                    if "max_tokens" in response_text and "max_completion_tokens" in response_text:
+                        logger.warning("⚠️ 检测到 max_tokens 不兼容，自动使用 max_completion_tokens 重试")
+                        retry_data = {
+                            "model": llm_config.model_name,
+                            "messages": data.get("messages", []),
+                            "max_completion_tokens": 200
+                        }
+                        response = requests.post(url, json=retry_data, headers=headers, timeout=15)
+
+                # 兜底兼容B：若服务端提示 max_completion_tokens 不支持，则回退 max_tokens 重试
+                if response.status_code >= 400:
+                    response_text = (response.text or "").lower()
+                    if "max_completion_tokens" in response_text and "max_tokens" in response_text:
+                        logger.warning("⚠️ 检测到 max_completion_tokens 不兼容，自动回退 max_tokens 重试")
+                        retry_data = {
+                            "model": llm_config.model_name,
+                            "messages": data.get("messages", []),
+                            "max_tokens": 200,
+                            "temperature": 0.1
+                        }
+                        response = requests.post(url, json=retry_data, headers=headers, timeout=15)
+
                 response_time = time.time() - start_time
 
                 logger.info(f"📡 收到响应: HTTP {response.status_code}")
