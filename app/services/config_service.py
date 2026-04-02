@@ -974,7 +974,7 @@ class ConfigService:
                     "Authorization": f"Bearer {api_key}"
                 }
 
-                model_name = (llm_config.model_name or "").lower()
+                model_name = (llm_config.model_name or "").strip().lower()
                 data = {
                     "model": llm_config.model_name,
                     "messages": [
@@ -984,10 +984,10 @@ class ConfigService:
 
                 # OpenAI 推理模型（如 o1/o3/o4/gpt-5）不支持 max_tokens，
                 # 需使用 max_completion_tokens，且部分模型不接受 temperature。
-                is_reasoning_model = (
-                    model_name.startswith("o1")
-                    or model_name.startswith("o3")
-                    or model_name.startswith("o4")
+                # 兼容常见命名：o3 / openai/o3 / provider:o3 / gpt-5*
+                import re
+                is_reasoning_model = bool(
+                    re.search(r"(^|[\/:_-])o[134](?:$|[\/:_-])", model_name)
                     or model_name.startswith("gpt-5")
                 )
 
