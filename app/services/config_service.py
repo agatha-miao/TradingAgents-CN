@@ -974,14 +974,32 @@ class ConfigService:
                     "Authorization": f"Bearer {api_key}"
                 }
 
+                model_name = (llm_config.model_name or "").strip().lower()
                 data = {
                     "model": llm_config.model_name,
                     "messages": [
                         {"role": "user", "content": "Hello, please respond with 'OK' if you can read this."}
                     ],
-                    "max_tokens": 200,  # 增加到200，给推理模型（如o1/gpt-5）足够空间
-                    "temperature": 0.1
                 }
+
+                # OpenAI 推理模型（如 o1/o3/o4/gpt-5）不支持 max_tokens，
+                # 需使用 max_completion_tokens，且部分模型不接受 temperature。
+                # 兼容常见命名：o3 / openai/o3 / provider:o3 / gpt-5*
+                import re
+                is_reasoning_model = bool(
+                    re.search(r"(^|[\/:_-])o[134](?:$|[\/:_-])", model_name)
+                    or model_name.startswith("gpt-5")
+                )
+
+                # OpenAI 官方接口优先使用 max_completion_tokens（对 o 系列更稳）
+                prefer_completion_tokens = provider_str == "openai" or is_reasoning_model
+
+                if prefer_completion_tokens:
+                    data["max_completion_tokens"] = 200
+                    logger.info(f"🧠 推理模型测试参数: 使用 max_completion_tokens=200, model={llm_config.model_name}")
+                else:
+                    data["max_tokens"] = 200
+                    data["temperature"] = 0.1
 
                 logger.info(f"🌐 发送测试请求到: {url}")
                 logger.info(f"📦 使用模型: {llm_config.model_name}")
@@ -989,6 +1007,32 @@ class ConfigService:
 
                 # 发送测试请求
                 response = requests.post(url, json=data, headers=headers, timeout=15)
+
+                # 兜底兼容A：若服务端提示 max_tokens 不支持，则自动改为 max_completion_tokens 重试
+                if response.status_code >= 400:
+                    response_text = (response.text or "").lower()
+                    if "max_tokens" in response_text and "max_completion_tokens" in response_text:
+                        logger.warning("⚠️ 检测到 max_tokens 不兼容，自动使用 max_completion_tokens 重试")
+                        retry_data = {
+                            "model": llm_config.model_name,
+                            "messages": data.get("messages", []),
+                            "max_completion_tokens": 200
+                        }
+                        response = requests.post(url, json=retry_data, headers=headers, timeout=15)
+
+                # 兜底兼容B：若服务端提示 max_completion_tokens 不支持，则回退 max_tokens 重试
+                if response.status_code >= 400:
+                    response_text = (response.text or "").lower()
+                    if "max_completion_tokens" in response_text and "max_tokens" in response_text:
+                        logger.warning("⚠️ 检测到 max_completion_tokens 不兼容，自动回退 max_tokens 重试")
+                        retry_data = {
+                            "model": llm_config.model_name,
+                            "messages": data.get("messages", []),
+                            "max_tokens": 200,
+                            "temperature": 0.1
+                        }
+                        response = requests.post(url, json=retry_data, headers=headers, timeout=15)
+
                 response_time = time.time() - start_time
 
                 logger.info(f"📡 收到响应: HTTP {response.status_code}")
