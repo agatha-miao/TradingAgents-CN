@@ -974,14 +974,29 @@ class ConfigService:
                     "Authorization": f"Bearer {api_key}"
                 }
 
+                model_name = (llm_config.model_name or "").lower()
                 data = {
                     "model": llm_config.model_name,
                     "messages": [
                         {"role": "user", "content": "Hello, please respond with 'OK' if you can read this."}
                     ],
-                    "max_tokens": 200,  # 增加到200，给推理模型（如o1/gpt-5）足够空间
-                    "temperature": 0.1
                 }
+
+                # OpenAI 推理模型（如 o1/o3/o4/gpt-5）不支持 max_tokens，
+                # 需使用 max_completion_tokens，且部分模型不接受 temperature。
+                is_reasoning_model = (
+                    model_name.startswith("o1")
+                    or model_name.startswith("o3")
+                    or model_name.startswith("o4")
+                    or model_name.startswith("gpt-5")
+                )
+
+                if is_reasoning_model:
+                    data["max_completion_tokens"] = 200
+                    logger.info(f"🧠 推理模型测试参数: 使用 max_completion_tokens=200, model={llm_config.model_name}")
+                else:
+                    data["max_tokens"] = 200
+                    data["temperature"] = 0.1
 
                 logger.info(f"🌐 发送测试请求到: {url}")
                 logger.info(f"📦 使用模型: {llm_config.model_name}")
