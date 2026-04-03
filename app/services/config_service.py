@@ -1007,6 +1007,23 @@ class ConfigService:
                     if removed_max_tokens is not None or removed_temperature is not None:
                         logger.warning("⚠️ 防回归保护触发：推理模型请求中移除了 max_tokens/temperature")
 
+                # 终极兜底保护：无论前面如何合并冲突，都确保优先使用 max_completion_tokens
+                if "max_completion_tokens" not in data:
+                    logger.warning("⚠️ 兜底保护触发：请求缺少 max_completion_tokens，自动补齐")
+                    data["max_completion_tokens"] = 200
+                if "max_completion_tokens" in data and "max_tokens" in data:
+                    logger.warning("⚠️ 兜底保护触发：同时存在 max_completion_tokens/max_tokens，移除 max_tokens")
+                    data.pop("max_tokens", None)
+
+                # 推理模型不接受 temperature，这里统一移除避免 400
+                if (
+                    normalized_model_name.startswith("o1")
+                    or normalized_model_name.startswith("o3")
+                    or normalized_model_name.startswith("o4")
+                    or normalized_model_name.startswith("gpt-5")
+                ):
+                    data.pop("temperature", None)
+
                 logger.info(f"🌐 发送测试请求到: {url}")
                 logger.info(f"📦 使用模型: {llm_config.model_name}")
                 logger.info(f"📦 请求数据: {data}")
