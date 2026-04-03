@@ -949,6 +949,13 @@ class ConfigService:
                 result = self._test_dashscope_api(api_key, f"{provider_str} {llm_config.model_name}", llm_config.model_name)
                 result["response_time"] = time.time() - start_time
                 return result
+            elif provider_str == "openai":
+                # OpenAI 使用模型列表接口做连通性测试，避免不同模型参数差异导致误报
+                # （例如 o3/o4/gpt-5 不支持 max_tokens）
+                logger.info("🔍 使用 OpenAI 专用测试方法（/v1/models）")
+                result = self._test_openai_api(api_key, f"{provider_str} {llm_config.model_name}")
+                result["response_time"] = time.time() - start_time
+                return result
             else:
                 # 其他厂家使用 OpenAI 兼容的测试方法
                 logger.info(f"🔍 使用 OpenAI 兼容测试方法")
