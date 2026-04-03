@@ -1,11 +1,10 @@
-version: '3.8'
-
 # TradingAgents-CN v1.0.0-preview Docker Compose配置
 # 支持前后端分离部署
 
 services:
   # FastAPI 后端服务
   backend:
+    pull_policy: never
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -30,10 +29,16 @@ services:
       TRADINGAGENTS_LOG_LEVEL: "INFO"
       TRADINGAGENTS_LOG_DIR: "/app/logs"
       TRADINGAGENTS_LOG_FILE: "/app/logs/tradingagents.log"
-      # Docker专用数据库配置
-      TRADINGAGENTS_MONGODB_URL: mongodb://admin:tradingagents123@mongodb:27017/tradingagents?authSource=admin
-      TRADINGAGENTS_REDIS_URL: redis://:tradingagents123@redis:6379
-      TRADINGAGENTS_CACHE_TYPE: redis
+      # Docker容器内数据库配置（应用实际读取 MONGODB_* / REDIS_*）
+      MONGODB_HOST: mongodb
+      MONGODB_PORT: 27017
+      MONGODB_USERNAME: admin
+      MONGODB_PASSWORD: tradingagents123
+      MONGODB_DATABASE: tradingagents
+      MONGODB_AUTH_SOURCE: admin
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: tradingagents123
       # Docker环境标识
       DOCKER_CONTAINER: "true"
       # API配置
@@ -63,6 +68,7 @@ services:
 
   # Vue 3 前端服务
   frontend:
+    pull_policy: never
     build:
       context: .
       dockerfile: Dockerfile.frontend
@@ -72,8 +78,6 @@ services:
       - "3000:80"
     environment:
       TZ: "Asia/Shanghai"
-      # 后端API地址
-      VITE_API_BASE_URL: "http://localhost:8000"
     depends_on:
       backend:
         condition: service_healthy
@@ -205,4 +209,3 @@ networks:
   tradingagents-network:
     driver: bridge
     name: tradingagents-network
-
