@@ -974,14 +974,17 @@ class ConfigService:
                     "Authorization": f"Bearer {api_key}"
                 }
 
+                model_name = (llm_config.model_name or "").strip().lower()
                 data = {
                     "model": llm_config.model_name,
                     "messages": [
                         {"role": "user", "content": "Hello, please respond with 'OK' if you can read this."}
                     ],
-                    "max_tokens": 200,  # 增加到200，给推理模型（如o1/gpt-5）足够空间
-                    "temperature": 0.1
                 }
+
+                # 统一优先使用 max_completion_tokens，避免 o 系列模型触发 max_tokens 错误
+                data["max_completion_tokens"] = 200
+                logger.info(f"🧠 测试参数优先使用 max_completion_tokens=200, model={llm_config.model_name}")
 
                 logger.info(f"🌐 发送测试请求到: {url}")
                 logger.info(f"📦 使用模型: {llm_config.model_name}")
@@ -989,6 +992,20 @@ class ConfigService:
 
                 # 发送测试请求
                 response = requests.post(url, json=data, headers=headers, timeout=15)
+
+                # 兜底兼容：若服务端提示 max_completion_tokens 不支持，则回退 max_tokens 重试
+                if response.status_code >= 400:
+                    response_text = (response.text or "").lower()
+                    if "max_completion_tokens" in response_text and "max_tokens" in response_text:
+                        logger.warning("⚠️ 检测到 max_completion_tokens 不兼容，自动回退 max_tokens 重试")
+                        retry_data = {
+                            "model": llm_config.model_name,
+                            "messages": data.get("messages", []),
+                            "max_tokens": 200,
+                            "temperature": 0.1
+                        }
+                        response = requests.post(url, json=retry_data, headers=headers, timeout=15)
+
                 response_time = time.time() - start_time
 
                 logger.info(f"📡 收到响应: HTTP {response.status_code}")
@@ -3727,47 +3744,47 @@ class ConfigService:
         try:
             import requests
 
-            url = "https://api.openai.com/v1/chat/completions"
+            # 使用模型列表接口做连通性测试，避免不同模型参数差异（如 max_tokens vs max_completion_tokens）
+            url = "https://api.openai.com/v1/models"
 
             headers = {
-                "Content-Type": "application/json",
                 "Authorization": f"Bearer {api_key}"
             }
 
-            data = {
-                "model": "gpt-3.5-turbo",
-                "messages": [
-                    {"role": "user", "content": "你好，请简单介绍一下你自己。"}
-                ],
-                "max_tokens": 50,
-                "temperature": 0.1
-            }
-
-            response = requests.post(url, json=data, headers=headers, timeout=10)
+            response = requests.get(url, headers=headers, timeout=10)
 
             if response.status_code == 200:
                 result = response.json()
-                if "choices" in result and len(result["choices"]) > 0:
-                    content = result["choices"][0]["message"]["content"]
-                    if content and len(content.strip()) > 0:
-                        return {
-                            "success": True,
-                            "message": f"{display_name} API连接测试成功"
-                        }
-                    else:
-                        return {
-                            "success": False,
-                            "message": f"{display_name} API响应为空"
-                        }
+                models = result.get("data", []) if isinstance(result, dict) else []
+                if models:
+                    return {
+                        "success": True,
+                        "message": f"{display_name} API连接测试成功"
+                    }
                 else:
                     return {
                         "success": False,
-                        "message": f"{display_name} API响应格式异常"
+                        "message": f"{display_name} API响应格式异常（未返回模型列表）"
                     }
-            else:
+            elif response.status_code == 401:
                 return {
                     "success": False,
-                    "message": f"{display_name} API测试失败: HTTP {response.status_code}"
+                    "message": f"{display_name} API密钥无效或已过期"
+                }
+            elif response.status_code == 403:
+                return {
+                    "success": False,
+                    "message": f"{display_name} API权限不足或配额已用完"
+                }
+            else:
+                try:
+                    error_detail = response.json()
+                    error_msg = error_detail.get("error", {}).get("message", f"HTTP {response.status_code}")
+                except Exception:
+                    error_msg = f"HTTP {response.status_code}"
+                return {
+                    "success": False,
+                    "message": f"{display_name} API测试失败: {error_msg}"
                 }
 
         except Exception as e:
@@ -4283,11 +4300,25 @@ class ConfigService:
                 "messages": [
                     {"role": "user", "content": "Hello, please respond with 'OK' if you can read this."}
                 ],
-                "max_tokens": 200,  # 增加到200，给推理模型（如o1/gpt-5）足够空间
-                "temperature": 0.1
+                "max_completion_tokens": 200
             }
 
             response = requests.post(url, json=data, headers=headers, timeout=15)
+
+            # 若服务端不支持 max_completion_tokens，则回退到 max_tokens
+            if response.status_code >= 400:
+                response_text = (response.text or "").lower()
+                if "max_completion_tokens" in response_text and "max_tokens" in response_text:
+                    logger.warning(f"⚠️ [{display_name}] 不支持 max_completion_tokens，回退 max_tokens 重试")
+                    data = {
+                        "model": test_model,
+                        "messages": [
+                            {"role": "user", "content": "Hello, please respond with 'OK' if you can read this."}
+                        ],
+                        "max_tokens": 200,
+                        "temperature": 0.1
+                    }
+                    response = requests.post(url, json=data, headers=headers, timeout=15)
 
             if response.status_code == 200:
                 result = response.json()
