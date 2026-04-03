@@ -986,6 +986,20 @@ class ConfigService:
                 data["max_completion_tokens"] = 200
                 logger.info(f"🧠 测试参数优先使用 max_completion_tokens=200, model={llm_config.model_name}")
 
+                # 防回归保护：若模型是推理模型，强制移除 max_tokens/temperature
+                normalized_model_name = (llm_config.model_name or "").strip().lower()
+                if (
+                    normalized_model_name.startswith("o1")
+                    or normalized_model_name.startswith("o3")
+                    or normalized_model_name.startswith("o4")
+                    or normalized_model_name.startswith("gpt-5")
+                ):
+                    removed_max_tokens = data.pop("max_tokens", None)
+                    removed_temperature = data.pop("temperature", None)
+                    data["max_completion_tokens"] = 200
+                    if removed_max_tokens is not None or removed_temperature is not None:
+                        logger.warning("⚠️ 防回归保护触发：推理模型请求中移除了 max_tokens/temperature")
+
                 logger.info(f"🌐 发送测试请求到: {url}")
                 logger.info(f"📦 使用模型: {llm_config.model_name}")
                 logger.info(f"📦 请求数据: {data}")
