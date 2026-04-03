@@ -348,6 +348,7 @@ def _get_default_provider_by_model(model_name: str) -> str:
         'gpt-4-turbo': 'openai',
         'gpt-4o': 'openai',
         'gpt-4o-mini': 'openai',
+        'gpt-5.4-mini': 'openai',
 
         # Google
         'gemini-pro': 'google',
@@ -364,7 +365,14 @@ def _get_default_provider_by_model(model_name: str) -> str:
         'chatglm3-6b': 'zhipu'
     }
 
-    provider = model_provider_map.get(model_name, 'dashscope')  # 默认使用阿里百炼
+    # 优先使用精确映射；否则对 OpenAI 系列模型做前缀兜底，避免误回退到 dashscope
+    provider = model_provider_map.get(model_name)
+    if not provider:
+        normalized = (model_name or "").strip().lower()
+        if normalized.startswith("gpt-") or normalized.startswith("o1") or normalized.startswith("o3") or normalized.startswith("o4"):
+            provider = "openai"
+        else:
+            provider = 'dashscope'  # 默认使用阿里百炼
     logger.info(f"🔧 使用默认映射: {model_name} -> {provider}")
     return provider
 

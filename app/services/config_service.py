@@ -2502,6 +2502,14 @@ class ConfigService:
                 "provider_name": "OpenAI",
                 "models": [
                     {
+                        "name": "gpt-5.4-mini",
+                        "display_name": "GPT-5.4 Mini - 推荐默认",
+                        "input_price_per_1k": 0.0,
+                        "output_price_per_1k": 0.0,
+                        "context_length": 128000,
+                        "currency": "USD"
+                    },
+                    {
                         "name": "gpt-4o",
                         "display_name": "GPT-4o - 最新旗舰",
                         "input_price_per_1k": 0.005,
