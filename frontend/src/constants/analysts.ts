@@ -94,6 +94,7 @@ export const MODEL_TO_PROVIDER_MAP: Record<string, string> = {
   'gpt-4-turbo': 'openai',
   'gpt-4o': 'openai',
   'gpt-4o-mini': 'openai',
+  'gpt-5.4-mini': 'openai',
 
   // Google
   'gemini-pro': 'google',
@@ -112,5 +113,18 @@ export const MODEL_TO_PROVIDER_MAP: Record<string, string> = {
 
 // 根据模型名称获取供应商
 export const getProviderByModel = (modelName: string): string => {
-  return MODEL_TO_PROVIDER_MAP[modelName] || 'dashscope' // 默认使用阿里百炼
+  const exact = MODEL_TO_PROVIDER_MAP[modelName]
+  if (exact) return exact
+
+  const normalized = (modelName || '').trim().toLowerCase()
+  if (
+    normalized.startsWith('gpt-') ||
+    normalized.startsWith('o1') ||
+    normalized.startsWith('o3') ||
+    normalized.startsWith('o4')
+  ) {
+    return 'openai'
+  }
+
+  return 'dashscope' // 默认使用阿里百炼
 }

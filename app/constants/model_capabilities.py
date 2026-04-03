@@ -159,6 +159,14 @@ DEFAULT_MODEL_CAPABILITIES: Dict[str, Dict[str, Any]] = {
         "performance_metrics": {"speed": 5, "cost": 5, "quality": 3},
         "description": "GPT-4o Mini，经济实惠"
     },
+    "gpt-5.4-mini": {
+        "capability_level": 4,
+        "suitable_roles": [ModelRole.BOTH],
+        "features": [ModelFeature.TOOL_CALLING, ModelFeature.REASONING, ModelFeature.FAST_RESPONSE],
+        "recommended_depths": ["基础", "标准", "深度", "全面"],
+        "performance_metrics": {"speed": 4, "cost": 4, "quality": 5},
+        "description": "GPT-5.4 Mini，推荐用于统一分析"
+    },
     "o1-mini": {
         "capability_level": 4,
         "suitable_roles": [ModelRole.DEEP_ANALYSIS],
@@ -455,4 +463,3 @@ def parse_aggregator_model(model_name: str) -> Tuple[str, str]:
         parts = model_name.split("/", 1)
         return parts[0], parts[1]
     return "", model_name
-

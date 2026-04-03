@@ -539,6 +539,7 @@ const getPresetModels = (providerName: string): ModelInfo[] => {
   const presets: Record<string, ModelInfo[]> = {
     '302ai': [
       // OpenAI 模型
+      { name: 'gpt-5.4-mini', display_name: 'GPT-5.4 Mini', input_price_per_1k: 0, output_price_per_1k: 0, context_length: 128000, currency: 'USD' },
       { name: 'gpt-4o', display_name: 'GPT-4o', input_price_per_1k: 0.005, output_price_per_1k: 0.015, context_length: 128000, currency: 'USD' },
       { name: 'gpt-4o-mini', display_name: 'GPT-4o Mini', input_price_per_1k: 0.00015, output_price_per_1k: 0.0006, context_length: 128000, currency: 'USD' },
       { name: 'gpt-4-turbo', display_name: 'GPT-4 Turbo', input_price_per_1k: 0.01, output_price_per_1k: 0.03, context_length: 128000, currency: 'USD' },
@@ -556,6 +557,7 @@ const getPresetModels = (providerName: string): ModelInfo[] => {
     ],
     'openrouter': [
       // OpenAI 模型
+      { name: 'openai/gpt-5.4-mini', display_name: 'GPT-5.4 Mini', input_price_per_1k: 0, output_price_per_1k: 0, context_length: 128000, currency: 'USD' },
       { name: 'openai/gpt-4o', display_name: 'GPT-4o', input_price_per_1k: 0.005, output_price_per_1k: 0.015, context_length: 128000, currency: 'USD' },
       { name: 'openai/gpt-4o-mini', display_name: 'GPT-4o Mini', input_price_per_1k: 0.00015, output_price_per_1k: 0.0006, context_length: 128000, currency: 'USD' },
       { name: 'openai/gpt-3.5-turbo', display_name: 'GPT-3.5 Turbo', input_price_per_1k: 0.0005, output_price_per_1k: 0.0015, context_length: 16385, currency: 'USD' },
@@ -625,4 +627,3 @@ onMounted(() => {
   }
 }
 </style>
-

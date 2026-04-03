@@ -406,6 +406,7 @@ const availableModels = computed(() => {
       { label: 'qwen-max', value: 'qwen-max' }
     ],
     openai: [
+      { label: 'gpt-5.4-mini', value: 'gpt-5.4-mini' },
       { label: 'gpt-3.5-turbo', value: 'gpt-3.5-turbo' },
       { label: 'gpt-4', value: 'gpt-4' },
       { label: 'gpt-4-turbo', value: 'gpt-4-turbo' }
