@@ -949,137 +949,25 @@ class ConfigService:
                 result = self._test_dashscope_api(api_key, f"{provider_str} {llm_config.model_name}", llm_config.model_name)
                 result["response_time"] = time.time() - start_time
                 return result
+            elif provider_str == "openai":
+                # OpenAI 使用模型列表接口做连通性测试，避免不同模型参数差异导致误报
+                # （例如 o3/o4/gpt-5 不支持 max_tokens）
+                logger.info("🔍 使用 OpenAI 专用测试方法（/v1/models）")
+                result = self._test_openai_api(api_key, f"{provider_str} {llm_config.model_name}")
+                result["response_time"] = time.time() - start_time
+                return result
             else:
-                # 其他厂家使用 OpenAI 兼容的测试方法
-                logger.info(f"🔍 使用 OpenAI 兼容测试方法")
-
-                # 构建测试请求
-                api_base_normalized = api_base.rstrip("/")
-
-                # 🔧 智能版本号处理：只有在没有版本号的情况下才添加 /v1
-                # 避免对已有版本号的URL（如智谱AI的 /v4）重复添加 /v1
-                import re
-                if not re.search(r'/v\d+$', api_base_normalized):
-                    # URL末尾没有版本号，添加 /v1（OpenAI标准）
-                    api_base_normalized = api_base_normalized + "/v1"
-                    logger.info(f"   添加 /v1 版本号: {api_base_normalized}")
-                else:
-                    # URL已包含版本号（如 /v4），不添加
-                    logger.info(f"   检测到已有版本号，保持原样: {api_base_normalized}")
-
-                url = f"{api_base_normalized}/chat/completions"
-
-                headers = {
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {api_key}"
-                }
-
-                data = {
-                    "model": llm_config.model_name,
-                    "messages": [
-                        {"role": "user", "content": "Hello, please respond with 'OK' if you can read this."}
-                    ],
-                    "max_tokens": 200,  # 增加到200，给推理模型（如o1/gpt-5）足够空间
-                    "temperature": 0.1
-                }
-
-                logger.info(f"🌐 发送测试请求到: {url}")
-                logger.info(f"📦 使用模型: {llm_config.model_name}")
-                logger.info(f"📦 请求数据: {data}")
-
-                # 发送测试请求
-                response = requests.post(url, json=data, headers=headers, timeout=15)
-                response_time = time.time() - start_time
-
-                logger.info(f"📡 收到响应: HTTP {response.status_code}")
-
-                # 处理响应（仅用于 OpenAI 兼容的厂家）
-                if response.status_code == 200:
-                    try:
-                        result = response.json()
-                        logger.info(f"📦 响应JSON: {result}")
-
-                        if "choices" in result and len(result["choices"]) > 0:
-                            content = result["choices"][0]["message"]["content"]
-                            logger.info(f"📝 响应内容: {content}")
-
-                            if content and len(content.strip()) > 0:
-                                logger.info(f"✅ 测试成功: {content[:50]}")
-                                return {
-                                    "success": True,
-                                    "message": f"成功连接到 {provider_str} {llm_config.model_name}",
-                                    "response_time": response_time,
-                                    "details": {
-                                        "provider": provider_str,
-                                        "model": llm_config.model_name,
-                                        "api_base": api_base,
-                                        "response_preview": content[:100]
-                                    }
-                                }
-                            else:
-                                logger.warning(f"⚠️ API响应内容为空")
-                                return {
-                                    "success": False,
-                                    "message": "API响应内容为空",
-                                    "response_time": response_time,
-                                    "details": None
-                                }
-                        else:
-                            logger.warning(f"⚠️ API响应格式异常，缺少 choices 字段")
-                            logger.warning(f"   响应内容: {result}")
-                            return {
-                                "success": False,
-                                "message": "API响应格式异常",
-                                "response_time": response_time,
-                                "details": None
-                            }
-                    except Exception as e:
-                        logger.error(f"❌ 解析响应失败: {e}")
-                        logger.error(f"   响应文本: {response.text[:500]}")
-                        return {
-                            "success": False,
-                            "message": f"解析响应失败: {str(e)}",
-                            "response_time": response_time,
-                            "details": None
-                        }
-                elif response.status_code == 401:
-                    return {
-                        "success": False,
-                        "message": "API密钥无效或已过期",
-                        "response_time": response_time,
-                        "details": None
-                    }
-                elif response.status_code == 403:
-                    return {
-                        "success": False,
-                        "message": "API权限不足或配额已用完",
-                        "response_time": response_time,
-                        "details": None
-                    }
-                elif response.status_code == 404:
-                    return {
-                        "success": False,
-                        "message": f"API端点不存在，请检查API基础URL是否正确: {url}",
-                        "response_time": response_time,
-                        "details": None
-                    }
-                else:
-                    try:
-                        error_detail = response.json()
-                        error_msg = error_detail.get("error", {}).get("message", f"HTTP {response.status_code}")
-                        return {
-                            "success": False,
-                            "message": f"API测试失败: {error_msg}",
-                            "response_time": response_time,
-                            "details": None
-                        }
-                    except:
-                        return {
-                        "success": False,
-                        "message": f"API测试失败: HTTP {response.status_code}",
-                        "response_time": response_time,
-                        "details": None
-                    }
+                # 其他 OpenAI 兼容厂家统一使用 /models 连通性测试
+                # 用户只需要验证 key/base_url 有效，不再依赖 chat/completions 参数探测
+                logger.info("🔍 使用 OpenAI 兼容连通性测试（/models）")
+                result = self._test_openai_compatible_models_api(
+                    api_key=api_key,
+                    display_name=f"{provider_str} {llm_config.model_name}",
+                    base_url=api_base,
+                    provider_name=provider_str
+                )
+                result["response_time"] = time.time() - start_time
+                return result
 
         except requests.exceptions.Timeout:
             response_time = time.time() - start_time
@@ -3727,47 +3615,47 @@ class ConfigService:
         try:
             import requests
 
-            url = "https://api.openai.com/v1/chat/completions"
+            # 使用模型列表接口做连通性测试，避免不同模型参数差异（如 max_tokens vs max_completion_tokens）
+            url = "https://api.openai.com/v1/models"
 
             headers = {
-                "Content-Type": "application/json",
                 "Authorization": f"Bearer {api_key}"
             }
 
-            data = {
-                "model": "gpt-3.5-turbo",
-                "messages": [
-                    {"role": "user", "content": "你好，请简单介绍一下你自己。"}
-                ],
-                "max_tokens": 50,
-                "temperature": 0.1
-            }
-
-            response = requests.post(url, json=data, headers=headers, timeout=10)
+            response = requests.get(url, headers=headers, timeout=10)
 
             if response.status_code == 200:
                 result = response.json()
-                if "choices" in result and len(result["choices"]) > 0:
-                    content = result["choices"][0]["message"]["content"]
-                    if content and len(content.strip()) > 0:
-                        return {
-                            "success": True,
-                            "message": f"{display_name} API连接测试成功"
-                        }
-                    else:
-                        return {
-                            "success": False,
-                            "message": f"{display_name} API响应为空"
-                        }
+                models = result.get("data", []) if isinstance(result, dict) else []
+                if models:
+                    return {
+                        "success": True,
+                        "message": f"{display_name} API连接测试成功"
+                    }
                 else:
                     return {
                         "success": False,
-                        "message": f"{display_name} API响应格式异常"
+                        "message": f"{display_name} API响应格式异常（未返回模型列表）"
                     }
-            else:
+            elif response.status_code == 401:
                 return {
                     "success": False,
-                    "message": f"{display_name} API测试失败: HTTP {response.status_code}"
+                    "message": f"{display_name} API密钥无效或已过期"
+                }
+            elif response.status_code == 403:
+                return {
+                    "success": False,
+                    "message": f"{display_name} API权限不足或配额已用完"
+                }
+            else:
+                try:
+                    error_detail = response.json()
+                    error_msg = error_detail.get("error", {}).get("message", f"HTTP {response.status_code}")
+                except Exception:
+                    error_msg = f"HTTP {response.status_code}"
+                return {
+                    "success": False,
+                    "message": f"{display_name} API测试失败: {error_msg}"
                 }
 
         except Exception as e:
@@ -4283,11 +4171,25 @@ class ConfigService:
                 "messages": [
                     {"role": "user", "content": "Hello, please respond with 'OK' if you can read this."}
                 ],
-                "max_tokens": 200,  # 增加到200，给推理模型（如o1/gpt-5）足够空间
-                "temperature": 0.1
+                "max_completion_tokens": 200
             }
 
             response = requests.post(url, json=data, headers=headers, timeout=15)
+
+            # 若服务端不支持 max_completion_tokens，则回退到 max_tokens
+            if response.status_code >= 400:
+                response_text = (response.text or "").lower()
+                if "max_completion_tokens" in response_text and "max_tokens" in response_text:
+                    logger.warning(f"⚠️ [{display_name}] 不支持 max_completion_tokens，回退 max_tokens 重试")
+                    data = {
+                        "model": test_model,
+                        "messages": [
+                            {"role": "user", "content": "Hello, please respond with 'OK' if you can read this."}
+                        ],
+                        "max_tokens": 200,
+                        "temperature": 0.1
+                    }
+                    response = requests.post(url, json=data, headers=headers, timeout=15)
 
             if response.status_code == 200:
                 result = response.json()
@@ -4340,6 +4242,78 @@ class ConfigService:
                         "message": f"{display_name} API测试失败: HTTP {response.status_code}"
                     }
 
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"{display_name} API测试异常: {str(e)}"
+            }
+
+    def _test_openai_compatible_models_api(
+        self,
+        api_key: str,
+        display_name: str,
+        base_url: str,
+        provider_name: Optional[str] = None
+    ) -> dict:
+        """使用 /models 端点测试 OpenAI 兼容渠道连通性（不依赖 chat/completions 参数）"""
+        try:
+            import re
+
+            if not base_url:
+                return {
+                    "success": False,
+                    "message": f"{display_name} 缺少 API Base URL"
+                }
+
+            normalized_base = base_url.rstrip("/")
+            if not re.search(r'/v\d+$', normalized_base):
+                normalized_base = normalized_base + "/v1"
+
+            url = f"{normalized_base}/models"
+            headers = {"Authorization": f"Bearer {api_key}"}
+
+            logger.info(f"🔍 [{display_name}] 使用 /models 连通性测试: {url}")
+            response = requests.get(url, headers=headers, timeout=15)
+
+            if response.status_code == 200:
+                try:
+                    payload = response.json()
+                except Exception:
+                    payload = {}
+
+                model_count = len(payload.get("data", [])) if isinstance(payload, dict) else 0
+                suffix = f"（返回 {model_count} 个模型）" if model_count > 0 else ""
+                provider_label = provider_name or display_name
+                return {
+                    "success": True,
+                    "message": f"{provider_label} API连接测试成功{suffix}"
+                }
+            if response.status_code == 401:
+                return {
+                    "success": False,
+                    "message": f"{display_name} API密钥无效或已过期"
+                }
+            if response.status_code == 403:
+                return {
+                    "success": False,
+                    "message": f"{display_name} API权限不足或配额已用完"
+                }
+            if response.status_code == 404:
+                return {
+                    "success": False,
+                    "message": f"{display_name} API端点不存在，请检查Base URL: {url}"
+                }
+
+            try:
+                error_detail = response.json()
+                error_msg = error_detail.get("error", {}).get("message", f"HTTP {response.status_code}")
+            except Exception:
+                error_msg = response.text[:200] if response.text else f"HTTP {response.status_code}"
+
+            return {
+                "success": False,
+                "message": f"{display_name} API测试失败: {error_msg}"
+            }
         except Exception as e:
             return {
                 "success": False,
