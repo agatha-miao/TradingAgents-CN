@@ -5,6 +5,7 @@
 import time
 import asyncio
 import logging
+import os
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from app.utils.timezone import now_tz
@@ -882,7 +883,19 @@ class ConfigService:
             import requests
 
             # 获取 provider 字符串值（兼容枚举和字符串）
-            provider_str = llm_config.provider.value if hasattr(llm_config.provider, 'value') else str(llm_config.provider)
+            provider_str_raw = llm_config.provider.value if hasattr(llm_config.provider, 'value') else str(llm_config.provider)
+            provider_str = (provider_str_raw or '').strip().lower()
+            openai_only_mode = os.getenv("OPENAI_ONLY_MODE", "true").strip().lower() not in ["0", "false", "no", "off"]
+
+            if openai_only_mode and provider_str != "openai":
+                return {
+                    "success": False,
+                    "message": "当前系统为 OpenAI-only 模式：仅允许测试 OpenAI 厂家/模型配置",
+                    "response_time": time.time() - start_time,
+                    "details": {
+                        "provider": provider_str
+                    }
+                }
 
             logger.info(f"🧪 测试大模型配置: {provider_str} - {llm_config.model_name}")
             logger.info(f"📍 API基础URL (模型配置): {llm_config.api_base}")
@@ -891,6 +904,8 @@ class ConfigService:
             db = await self._get_db()
             providers_collection = db.llm_providers
             provider_data = await providers_collection.find_one({"name": provider_str})
+            if not provider_data and provider_str_raw:
+                provider_data = await providers_collection.find_one({"name": provider_str_raw})
 
             # 1. 确定 API 基础 URL
             api_base = llm_config.api_base
@@ -1031,10 +1046,13 @@ class ConfigService:
                 # 发送测试请求
                 response = requests.post(url, json=data, headers=headers, timeout=15)
 
-                # 兜底兼容：若服务端提示 max_completion_tokens 不支持，则回退 max_tokens 重试
+                # 兜底兼容：仅在明确提示 max_completion_tokens 不支持时，才回退 max_tokens
                 if response.status_code >= 400:
                     response_text = (response.text or "").lower()
-                    if "max_completion_tokens" in response_text and "max_tokens" in response_text:
+                    completion_not_supported = ("max_completion_tokens" in response_text and ("not supported" in response_text or "unsupported" in response_text))
+                    max_tokens_not_supported = ("max_tokens" in response_text and ("not supported" in response_text or "unsupported" in response_text))
+
+                    if completion_not_supported and not max_tokens_not_supported:
                         logger.warning("⚠️ 检测到 max_completion_tokens 不兼容，自动回退 max_tokens 重试")
                         retry_data = {
                             "model": llm_config.model_name,
@@ -1043,6 +1061,8 @@ class ConfigService:
                             "temperature": 0.1
                         }
                         response = requests.post(url, json=retry_data, headers=headers, timeout=15)
+                    elif max_tokens_not_supported:
+                        logger.info("ℹ️ 服务端明确不支持 max_tokens，保持使用 max_completion_tokens，不执行回退")
 
                 response_time = time.time() - start_time
 
@@ -1122,6 +1142,8 @@ class ConfigService:
                     try:
                         error_detail = response.json()
                         error_msg = error_detail.get("error", {}).get("message", f"HTTP {response.status_code}")
+                        if "unsupported parameter" in str(error_msg).lower() and "max_tokens" in str(error_msg).lower():
+                            error_msg = f"{error_msg}（提示：OpenAI 新模型应使用 max_completion_tokens，系统已优先使用该参数）"
                         return {
                             "success": False,
                             "message": f"API测试失败: {error_msg}",
@@ -1129,12 +1151,19 @@ class ConfigService:
                             "details": None
                         }
                     except:
+                        if "unsupported parameter" in response.text.lower() and "max_tokens" in response.text.lower():
+                            return {
+                                "success": False,
+                                "message": f"API测试失败: HTTP {response.status_code}（提示：当前模型不支持 max_tokens，请使用 max_completion_tokens）",
+                                "response_time": response_time,
+                                "details": None
+                            }
                         return {
-                        "success": False,
-                        "message": f"API测试失败: HTTP {response.status_code}",
-                        "response_time": response_time,
-                        "details": None
-                    }
+                            "success": False,
+                            "message": f"API测试失败: HTTP {response.status_code}",
+                            "response_time": response_time,
+                            "details": None
+                        }
 
         except requests.exceptions.Timeout:
             response_time = time.time() - start_time
@@ -2852,6 +2881,13 @@ class ConfigService:
 
                 providers.append(provider)
 
+            # OpenAI-only 模式：默认仅暴露 openai 厂家，降低多厂家兼容逻辑复杂度与报错概率
+            # 可通过环境变量 OPENAI_ONLY_MODE=false 关闭该限制。
+            openai_only_mode = os.getenv("OPENAI_ONLY_MODE", "true").strip().lower() not in ["0", "false", "no", "off"]
+            if openai_only_mode:
+                providers = [p for p in providers if (p.name or "").strip().lower() == "openai"]
+                logger.info(f"🔒 [get_llm_providers] OpenAI-only 模式已启用，过滤后厂家数量: {len(providers)}")
+
             logger.info(f"🔍 [get_llm_providers] 返回 {len(providers)} 个供应商")
             return providers
         except Exception as e:
@@ -3341,6 +3377,14 @@ class ConfigService:
             provider_name = provider_data.get("name")
             api_key = provider_data.get("api_key")
             display_name = provider_data.get("display_name", provider_name)
+            normalized_provider_name = (provider_name or "").strip().lower()
+
+            openai_only_mode = os.getenv("OPENAI_ONLY_MODE", "true").strip().lower() not in ["0", "false", "no", "off"]
+            if openai_only_mode and normalized_provider_name != "openai":
+                return {
+                    "success": False,
+                    "message": "当前系统为 OpenAI-only 模式：已禁用非 OpenAI 厂家测试"
+                }
 
             # 🔥 判断数据库中的 API Key 是否有效
             if not self._is_valid_api_key(api_key):
@@ -3374,34 +3418,40 @@ class ConfigService:
         import asyncio
 
         try:
+            normalized_provider_name = (provider_name or "").strip().lower()
+
             # 聚合渠道（使用 OpenAI 兼容 API）
-            if provider_name in ["302ai", "oneapi", "newapi", "custom_aggregator"]:
+            if normalized_provider_name in ["302ai", "oneapi", "newapi", "custom_aggregator"]:
                 # 获取厂家的 base_url
                 db = await self._get_db()
                 providers_collection = db.llm_providers
-                provider_data = await providers_collection.find_one({"name": provider_name})
+                provider_data = await providers_collection.find_one({"name": normalized_provider_name})
+                if not provider_data and provider_name != normalized_provider_name:
+                    provider_data = await providers_collection.find_one({"name": provider_name})
                 base_url = provider_data.get("default_base_url") if provider_data else None
                 return await asyncio.get_event_loop().run_in_executor(
                     None, self._test_openai_compatible_api, api_key, display_name, base_url, provider_name
                 )
-            elif provider_name == "google":
+            elif normalized_provider_name == "google":
                 # 获取厂家的 base_url
                 db = await self._get_db()
                 providers_collection = db.llm_providers
-                provider_data = await providers_collection.find_one({"name": provider_name})
+                provider_data = await providers_collection.find_one({"name": normalized_provider_name})
+                if not provider_data and provider_name != normalized_provider_name:
+                    provider_data = await providers_collection.find_one({"name": provider_name})
                 base_url = provider_data.get("default_base_url") if provider_data else None
                 return await asyncio.get_event_loop().run_in_executor(None, self._test_google_api, api_key, display_name, base_url)
-            elif provider_name == "deepseek":
+            elif normalized_provider_name == "deepseek":
                 return await asyncio.get_event_loop().run_in_executor(None, self._test_deepseek_api, api_key, display_name)
-            elif provider_name == "dashscope":
+            elif normalized_provider_name == "dashscope":
                 return await asyncio.get_event_loop().run_in_executor(None, self._test_dashscope_api, api_key, display_name)
-            elif provider_name == "openrouter":
+            elif normalized_provider_name == "openrouter":
                 return await asyncio.get_event_loop().run_in_executor(None, self._test_openrouter_api, api_key, display_name)
-            elif provider_name == "openai":
+            elif normalized_provider_name == "openai":
                 return await asyncio.get_event_loop().run_in_executor(None, self._test_openai_api, api_key, display_name)
-            elif provider_name == "anthropic":
+            elif normalized_provider_name == "anthropic":
                 return await asyncio.get_event_loop().run_in_executor(None, self._test_anthropic_api, api_key, display_name)
-            elif provider_name == "qianfan":
+            elif normalized_provider_name == "qianfan":
                 return await asyncio.get_event_loop().run_in_executor(None, self._test_qianfan_api, api_key, display_name)
             else:
                 # 🔧 对于未知的自定义厂家，使用 OpenAI 兼容 API 测试
@@ -3409,7 +3459,9 @@ class ConfigService:
                 # 获取厂家的 base_url
                 db = await self._get_db()
                 providers_collection = db.llm_providers
-                provider_data = await providers_collection.find_one({"name": provider_name})
+                provider_data = await providers_collection.find_one({"name": normalized_provider_name})
+                if not provider_data and provider_name != normalized_provider_name:
+                    provider_data = await providers_collection.find_one({"name": provider_name})
                 base_url = provider_data.get("default_base_url") if provider_data else None
 
                 if not base_url:
@@ -3950,11 +4002,18 @@ class ConfigService:
                 try:
                     error_detail = response.json()
                     error_msg = error_detail.get("error", {}).get("message", f"HTTP {response.status_code}")
+                    if "unsupported parameter" in str(error_msg).lower() and "max_tokens" in str(error_msg).lower():
+                        error_msg = f"{error_msg}（提示：当前模型不支持 max_tokens，请使用 max_completion_tokens）"
                     return {
                         "success": False,
                         "message": f"{display_name} API测试失败: {error_msg}"
                     }
                 except:
+                    if "unsupported parameter" in response.text.lower() and "max_tokens" in response.text.lower():
+                        return {
+                            "success": False,
+                            "message": f"{display_name} API测试失败: HTTP {response.status_code}（提示：当前模型不支持 max_tokens，请使用 max_completion_tokens）"
+                        }
                     return {
                         "success": False,
                         "message": f"{display_name} API测试失败: HTTP {response.status_code}"
@@ -4351,10 +4410,13 @@ class ConfigService:
 
             response = requests.post(url, json=data, headers=headers, timeout=15)
 
-            # 若服务端不支持 max_completion_tokens，则回退到 max_tokens
+            # 若服务端明确不支持 max_completion_tokens，才回退到 max_tokens
             if response.status_code >= 400:
                 response_text = (response.text or "").lower()
-                if "max_completion_tokens" in response_text and "max_tokens" in response_text:
+                completion_not_supported = ("max_completion_tokens" in response_text and ("not supported" in response_text or "unsupported" in response_text))
+                max_tokens_not_supported = ("max_tokens" in response_text and ("not supported" in response_text or "unsupported" in response_text))
+
+                if completion_not_supported and not max_tokens_not_supported:
                     logger.warning(f"⚠️ [{display_name}] 不支持 max_completion_tokens，回退 max_tokens 重试")
                     data = {
                         "model": test_model,
@@ -4365,6 +4427,8 @@ class ConfigService:
                         "temperature": 0.1
                     }
                     response = requests.post(url, json=data, headers=headers, timeout=15)
+                elif max_tokens_not_supported:
+                    logger.info(f"ℹ️ [{display_name}] 服务端明确不支持 max_tokens，保持使用 max_completion_tokens")
 
             if response.status_code == 200:
                 result = response.json()
@@ -4399,6 +4463,8 @@ class ConfigService:
                 try:
                     error_detail = response.json()
                     error_msg = error_detail.get("error", {}).get("message", f"HTTP {response.status_code}")
+                    if "unsupported parameter" in str(error_msg).lower() and "max_tokens" in str(error_msg).lower():
+                        error_msg = f"{error_msg}（提示：当前模型不支持 max_tokens，请使用 max_completion_tokens）"
                     logger.error(f"❌ [{display_name}] API测试失败")
                     logger.error(f"   请求URL: {url}")
                     logger.error(f"   状态码: {response.status_code}")
@@ -4412,6 +4478,11 @@ class ConfigService:
                     logger.error(f"   请求URL: {url}")
                     logger.error(f"   状态码: {response.status_code}")
                     logger.error(f"   响应内容: {response.text[:500]}")
+                    if "unsupported parameter" in response.text.lower() and "max_tokens" in response.text.lower():
+                        return {
+                            "success": False,
+                            "message": f"{display_name} API测试失败: HTTP {response.status_code}（提示：当前模型不支持 max_tokens，请使用 max_completion_tokens）"
+                        }
                     return {
                         "success": False,
                         "message": f"{display_name} API测试失败: HTTP {response.status_code}"
